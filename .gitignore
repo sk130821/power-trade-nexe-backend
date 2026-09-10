@@ -1,0 +1,30 @@
+# Dependencies
+node_modules/
+
+# Secrets — keep .env.example in git
+.env
+.env.local
+.env.*.local
+
+# Uploads (receipts, popups, QR, etc.)
+uploads/
+!uploads/.gitkeep
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Runtime
+*.pid
+*.seed
+coverage/
+.nyc_output/

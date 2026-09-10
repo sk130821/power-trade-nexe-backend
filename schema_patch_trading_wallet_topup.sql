@@ -1,0 +1,5 @@
+-- Obsolete: wallet top-ups use the same `payments` table as registration (no new columns).
+-- Registration pending rows: member.status = 'pending'.
+-- Trading-wallet top-up pending rows: member.status = 'active'.
+-- Skip this file unless you are cleaning up an old DB that had a `purpose` column added;
+-- then you may run: ALTER TABLE payments DROP COLUMN purpose;
