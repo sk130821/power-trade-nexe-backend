@@ -6,6 +6,7 @@ const roiCtrl = require('../controllers/roiController');
 const dayTradeCtrl = require('../controllers/dayTradeController');
 const noticeCtrl = require('../controllers/noticeController');
 const withdrawalCtrl = require('../controllers/withdrawalController');
+const rewardPlanCtrl = require('../controllers/rewardPlanController');
 const { adminMiddleware, authMiddleware } = require('../middleware/auth');
 const upload = require('../config/upload');
 const { uploadAdminSettings } = require('../config/upload');
@@ -75,6 +76,8 @@ router.patch('/member/wallet-address', authMiddleware, withdrawalCtrl.updateMemb
 router.post('/member/withdrawals/send-otp', authMiddleware, withdrawalCtrl.sendWithdrawalOtp);
 router.post('/member/withdrawals', authMiddleware, withdrawalCtrl.createWithdrawal);
 router.get('/member/withdrawals', authMiddleware, withdrawalCtrl.listMyWithdrawals);
+router.get('/member/rewards', authMiddleware, rewardPlanCtrl.getMemberRewards);
+router.post('/member/rewards/claim', authMiddleware, rewardPlanCtrl.submitMemberClaim);
 
 // Admin protected
 router.get('/admin/stats', adminMiddleware, memberCtrl.getAdminStats);
@@ -138,6 +141,17 @@ router.post('/admin/salary', adminMiddleware, memberCtrl.giveSalary);
 router.get('/admin/salaries', adminMiddleware, memberCtrl.getAllSalaries);
 router.post('/admin/reward', adminMiddleware, memberCtrl.giveReward);
 router.get('/admin/rewards', adminMiddleware, memberCtrl.getAllRewards);
+router.get('/admin/reward-plan/tiers', adminMiddleware, rewardPlanCtrl.adminListTiers);
+router.put(
+  '/admin/reward-plan/tiers/:id',
+  adminMiddleware,
+  upload.fields([{ name: 'gift_image', maxCount: 1 }]),
+  rewardPlanCtrl.adminUpdateTier,
+);
+router.get('/admin/reward-plan/requests', adminMiddleware, rewardPlanCtrl.adminListRequests);
+router.post('/admin/reward-plan/requests/:id/approve', adminMiddleware, rewardPlanCtrl.adminApproveRequest);
+router.post('/admin/reward-plan/requests/:id/reject', adminMiddleware, rewardPlanCtrl.adminRejectRequest);
+router.get('/admin/reward-plan/achievers', adminMiddleware, rewardPlanCtrl.adminAchievers);
 
 // Admin: Transactions report
 router.get('/admin/transactions', adminMiddleware, memberCtrl.getAllTransactions);
