@@ -26,7 +26,11 @@ const adminSettingsFileFilter = (req, file, cb) => {
     if (/\.(mp4|webm|mov|m4v)$/i.test(ext)) return cb(null, true);
     return cb(new Error('Login popup video must be MP4, WebM, MOV, or M4V'));
   }
-  if (file.fieldname === 'login_popup_image' || file.fieldname === 'metamask_qr') {
+  if (
+    file.fieldname === 'login_popup_image' ||
+    file.fieldname === 'metamask_qr' ||
+    file.fieldname === 'website_banner_image'
+  ) {
     if (/\.(jpe?g|png|gif|webp|pdf)$/i.test(ext)) return cb(null, true);
     return cb(new Error('Image must be JPEG, PNG, GIF, WebP, or PDF'));
   }

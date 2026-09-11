@@ -7,6 +7,7 @@ const dayTradeCtrl = require('../controllers/dayTradeController');
 const noticeCtrl = require('../controllers/noticeController');
 const withdrawalCtrl = require('../controllers/withdrawalController');
 const rewardPlanCtrl = require('../controllers/rewardPlanController');
+const websiteContentCtrl = require('../controllers/websiteContentController');
 const { adminMiddleware, authMiddleware } = require('../middleware/auth');
 const upload = require('../config/upload');
 const { uploadAdminSettings } = require('../config/upload');
@@ -20,6 +21,8 @@ router.get('/auth/admin-settings', authCtrl.getAdminSettings);
 router.get('/auth/packages', authCtrl.getPackages);
 router.get('/auth/web3-config', authCtrl.getWeb3Config);
 router.get('/auth/sponsor/:code', memberCtrl.lookupSponsor);
+router.get('/public/website-banners', websiteContentCtrl.getPublicBanners);
+router.get('/public/login-popups', websiteContentCtrl.getPublicLoginPopups);
 
 // Member registration
 router.post('/member/register', upload.fields([{ name: 'aadhaar_photo', maxCount: 1 }]), memberCtrl.register);
@@ -152,6 +155,20 @@ router.get('/admin/reward-plan/requests', adminMiddleware, rewardPlanCtrl.adminL
 router.post('/admin/reward-plan/requests/:id/approve', adminMiddleware, rewardPlanCtrl.adminApproveRequest);
 router.post('/admin/reward-plan/requests/:id/reject', adminMiddleware, rewardPlanCtrl.adminRejectRequest);
 router.get('/admin/reward-plan/achievers', adminMiddleware, rewardPlanCtrl.adminAchievers);
+router.get('/admin/website-banners', adminMiddleware, websiteContentCtrl.adminListBanners);
+router.post(
+  '/admin/website-banners',
+  adminMiddleware,
+  uploadAdminSettings.fields([{ name: 'website_banner_image', maxCount: 1 }]),
+  websiteContentCtrl.adminCreateBanner,
+);
+router.put(
+  '/admin/website-banners/:id',
+  adminMiddleware,
+  uploadAdminSettings.fields([{ name: 'website_banner_image', maxCount: 1 }]),
+  websiteContentCtrl.adminUpdateBanner,
+);
+router.delete('/admin/website-banners/:id', adminMiddleware, websiteContentCtrl.adminDeleteBanner);
 
 // Admin: Transactions report
 router.get('/admin/transactions', adminMiddleware, memberCtrl.getAllTransactions);

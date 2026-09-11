@@ -356,6 +356,19 @@ CREATE TABLE IF NOT EXISTS reward_claim_requests (
   FOREIGN KEY (reviewed_by) REFERENCES admins(id) ON DELETE SET NULL
 );
 
+-- Marketing website hero slider (admin uploads)
+CREATE TABLE IF NOT EXISTS website_banners (
+  id INT PRIMARY KEY AUTO_INCREMENT,
+  image VARCHAR(500) NOT NULL,
+  alt_text VARCHAR(255) NOT NULL DEFAULT 'Banner',
+  sort_order INT NOT NULL DEFAULT 0,
+  is_active TINYINT(1) NOT NULL DEFAULT 1,
+  created_by INT NULL,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  FOREIGN KEY (created_by) REFERENCES admins(id) ON DELETE SET NULL
+);
+
 -- Insert default admin
 INSERT INTO admins (username, email, password, metamask_address)
 VALUES ('admin', 'admin@cryptomlm.com', '$2a$10$XfhbLh37OFLi5/pQ3Bc2Zewt.esho5Y64gr1fSRd20Yp7WR2JhHs6', '0xYourMetaMaskAddressHere')
