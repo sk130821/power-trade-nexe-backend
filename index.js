@@ -19,12 +19,13 @@ app.use(
   cors({
     origin(origin, cb) {
       if (!origin) return cb(null, true);
-      if (envOrigins.includes(origin)) return cb(null, true);
-      if (process.env.NODE_ENV !== 'production' && localDevOrigin.test(origin)) return cb(null, true);
+      const normalized = String(origin).trim().replace(/\/$/, '');
+      if (envOrigins.includes(normalized)) return cb(null, true);
+      if (process.env.NODE_ENV !== 'production' && localDevOrigin.test(normalized)) return cb(null, true);
       return cb(null, false);
     },
     credentials: true,
-  })
+  }),
 );
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
