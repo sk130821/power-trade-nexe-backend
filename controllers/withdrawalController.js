@@ -1,6 +1,5 @@
 const db = require('../config/db');
 const { checkWithdrawalAllowed, buildWithdrawalSchedule } = require('../utils/withdrawalSchedule');
-const { createEmailOtp, verifyEmailOtp } = require('../utils/emailOtp');
 const { getTradingWalletWithdrawable } = require('../utils/tradingWalletWithdrawable');
 
 const WALLET_COL = {
@@ -104,8 +103,13 @@ async function validateWithdrawalRequest(memberId, wallet_type, amount) {
   return { col, amt, member: mem[0], withdrawableBal, tradingWalletMeta };
 }
 
-/** Send OTP to member email before withdrawal. */
+/** OTP removed — kept for old clients; use POST /member/withdrawals directly. */
 exports.sendWithdrawalOtp = async (req, res) => {
+  res.status(410).json({ error: 'Email OTP is disabled. Submit withdrawal directly.' });
+};
+
+exports.createWithdrawal = async (req, res) => {
+  const conn = await db.getConnection();
   try {
     if (req.user.role !== 'member') return res.status(403).json({ error: 'Members only' });
     const memberId = req.user.id;
@@ -118,55 +122,8 @@ exports.sendWithdrawalOtp = async (req, res) => {
       return res.status(check.status || 400).json(body);
     }
 
-    const result = await createEmailOtp({
-      email: check.member.email,
-      purpose: 'withdrawal',
-      memberId,
-      name: check.member.name,
-      payload: {
-        wallet_type,
-        amount: check.amt,
-        note: note || null,
-      },
-    });
-    if (!result.ok) return res.status(result.status || 400).json({ error: result.error });
-    res.json({ message: result.message, expires_minutes: result.expires_minutes });
-  } catch (e) {
-    res.status(500).json({ error: e.message });
-  }
-};
-
-exports.createWithdrawal = async (req, res) => {
-  const conn = await db.getConnection();
-  try {
-    if (req.user.role !== 'member') return res.status(403).json({ error: 'Members only' });
-    const memberId = req.user.id;
-    const { wallet_type, amount, note, otp } = req.body;
-
-    const [memEmail] = await conn.query('SELECT email, name FROM members WHERE id = ?', [memberId]);
-    if (!memEmail.length) {
-      return res.status(404).json({ error: 'Member not found' });
-    }
-
-    const verified = await verifyEmailOtp({
-      email: memEmail[0].email,
-      otp,
-      purpose: 'withdrawal',
-      memberId,
-    });
-    if (!verified.ok) return res.status(verified.status || 400).json({ error: verified.error });
-
-    const payload = verified.payload || {};
-    const wType = payload.wallet_type || wallet_type;
-    const wAmt = payload.amount != null ? payload.amount : amount;
-    const wNote = payload.note != null ? payload.note : note;
-
-    const check = await validateWithdrawalRequest(memberId, wType, wAmt);
-    if (check.error) {
-      const body = { error: check.error };
-      if (check.schedule) body.schedule = check.schedule;
-      return res.status(check.status || 400).json(body);
-    }
+    const wType = wallet_type;
+    const wNote = note || null;
 
     await conn.beginTransaction();
     const [mem] = await conn.query(

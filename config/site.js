@@ -17,6 +17,7 @@ function expandOriginVariants(origin) {
   const out = [o];
   try {
     const u = new URL(o);
+    
     const host = u.hostname.toLowerCase();
     if (host.startsWith('www.')) {
       u.hostname = host.slice(4);

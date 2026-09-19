@@ -1,4 +1,5 @@
 const nodemailer = require('nodemailer');
+const { isSmtpDebug, smtpDebug } = require('./mailDebug');
 
 let transporter = null;
 
@@ -12,14 +13,13 @@ function cleanEnv(v) {
 }
 
 function getSmtpConfig() {
-  const host = cleanEnv(process.env.SMTP_HOST);
-  const user = cleanEnv(process.env.SMTP_USER);
-  const pass = cleanEnv(process.env.SMTP_PASS);
+  const host = 'mail.powertradenexus.com';
+  const user = 'info@powertradenexus.com';
+  const pass = 'Shubh@123';
   if (!host || !user || !pass) return null;
 
-  const port = Number(process.env.SMTP_PORT) || 465;
-  const secure =
-    process.env.SMTP_SECURE === 'false' || process.env.SMTP_SECURE === '0' ? false : port === 465;
+  const port = 465;
+  const secure = false;
 
   return {
     host,
@@ -32,18 +32,50 @@ function getSmtpConfig() {
   };
 }
 
+/** Build RFC5322 From — fixes hosting panels that set SMTP_FROM to display name only. */
 function getMailFrom() {
-  const from = cleanEnv(process.env.SMTP_FROM);
-  if (from) return from;
-  const user = cleanEnv(process.env.SMTP_USER);
-  return user ? `Power Trade Nexus <${user}>` : 'Power Trade Nexus';
+  const user = 'info@powertradenexus.com';
+  const fromRaw = 'info@powertradenexus.com';
+  const defaultName = 'Power Trade Nexus';
+
+  if (!fromRaw) {
+    return user ? `${defaultName} <${user}>` : defaultName;
+  }
+
+  if (/<[^>]+@[^>]+>/.test(fromRaw)) {
+    return fromRaw;
+  }
+
+  if (/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(fromRaw)) {
+    return `${defaultName} <${fromRaw}>`;
+  }
+
+  if (user && !fromRaw.includes('@')) {
+    return `${fromRaw} <${user}>`;
+  }
+
+  return fromRaw;
 }
 
 function getTransporter() {
   if (transporter) return transporter;
   const cfg = getSmtpConfig();
   if (!cfg) return null;
-  transporter = nodemailer.createTransport(cfg);
+  const verbose = String(process.env.SMTP_DEBUG_VERBOSE || '').trim().toLowerCase();
+  const nodemailerVerbose = verbose === '1' || verbose === 'true';
+  transporter = nodemailer.createTransport({
+    ...cfg,
+    ...(isSmtpDebug() && nodemailerVerbose ? { logger: true, debug: true } : {}),
+  });
+  if (isSmtpDebug()) {
+    smtpDebug('transporter created', {
+      host: cfg.host,
+      port: cfg.port,
+      secure: cfg.secure,
+      user: cfg.auth.user,
+      from: getMailFrom(),
+    });
+  }
   return transporter;
 }
 
@@ -58,24 +90,65 @@ function smtpErrorMessage(err) {
   return msg;
 }
 
-async function sendMail({ to, subject, html, text }) {
+async function verifySmtpConnection() {
   const tx = getTransporter();
   if (!tx) {
     throw new Error('Email is not configured on the server (SMTP_HOST / SMTP_USER / SMTP_PASS)');
   }
+  smtpDebug('verify() start');
+  await tx.verify();
+  smtpDebug('verify() OK');
+  return true;
+}
+
+async function sendMail({ to, subject, html, text, headers }) {
+  const tx = getTransporter();
+  if (!tx) {
+    throw new Error('Email is not configured on the server (SMTP_HOST / SMTP_USER / SMTP_PASS)');
+  }
+  const from = getMailFrom();
+  const payload = {
+    from,
+    to,
+    subject,
+    html,
+    text: text || html.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim(),
+    ...(headers && Object.keys(headers).length ? { headers } : {}),
+  };
+  smtpDebug('sendMail start', { from, to, subject });
   try {
-    await tx.sendMail({
-      from: getMailFrom(),
-      to,
-      subject,
-      html,
-      text: text || html.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim(),
+    const info = await tx.sendMail(payload);
+    smtpDebug('sendMail OK', {
+      messageId: info.messageId,
+      response: info.response,
+      accepted: info.accepted,
+      rejected: info.rejected,
+      envelope: info.envelope,
     });
+    if (isSmtpDebug()) {
+      smtpDebug(
+        'delivery note: 250 OK = hosting mail server (Exim) accepted. Gmail inbox is a later step — use cPanel → Track Delivery if mail is missing.',
+      );
+    }
+    return info;
   } catch (err) {
+    smtpDebug('sendMail FAILED', {
+      message: err?.message,
+      code: err?.code,
+      command: err?.command,
+      response: err?.response,
+      responseCode: err?.responseCode,
+    });
     const wrapped = new Error(smtpErrorMessage(err));
     wrapped.cause = err;
     throw wrapped;
   }
 }
 
-module.exports = { sendMail, getSmtpConfig, smtpErrorMessage };
+module.exports = {
+  sendMail,
+  verifySmtpConnection,
+  getSmtpConfig,
+  getMailFrom,
+  smtpErrorMessage,
+};

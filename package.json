@@ -6,7 +6,8 @@
   "scripts": {
     "start": "node index.js",
     "dev": "nodemon index.js",
-    "reset-db": "node scripts/reset-and-seed.js --confirm"
+    "reset-db": "node scripts/reset-and-seed.js --confirm",
+    "test:smtp": "node scripts/test-smtp.js"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",
