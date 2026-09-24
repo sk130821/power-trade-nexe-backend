@@ -13,29 +13,31 @@ function cleanEnv(v) {
 }
 
 function getSmtpConfig() {
-  const host = 'mail.powertradenexus.com';
-  const user = 'info@powertradenexus.com';
-  const pass = 'Shubh@123';
+  const host = cleanEnv(process.env.SMTP_HOST);
+  const user = cleanEnv(process.env.SMTP_USER);
+  const pass = cleanEnv(process.env.SMTP_PASS);
   if (!host || !user || !pass) return null;
 
-  const port = 465;
-  const secure = false;
+  const port = Number(process.env.SMTP_PORT) || 465;
+  const secure =
+    process.env.SMTP_SECURE === 'false' || process.env.SMTP_SECURE === '0' ? false : port === 465;
 
   return {
     host,
     port,
     secure,
     auth: { user, pass },
-    connectionTimeout: 20000,
-    greetingTimeout: 20000,
+    connectionTimeout: 12000,
+    greetingTimeout: 12000,
+    socketTimeout: 12000,
     ...(port === 587 && !secure ? { requireTLS: true } : {}),
   };
 }
 
 /** Build RFC5322 From — fixes hosting panels that set SMTP_FROM to display name only. */
 function getMailFrom() {
-  const user = 'info@powertradenexus.com';
-  const fromRaw = 'info@powertradenexus.com';
+  const user = cleanEnv(process.env.SMTP_USER);
+  const fromRaw = cleanEnv(process.env.SMTP_FROM);
   const defaultName = 'Power Trade Nexus';
 
   if (!fromRaw) {
@@ -84,8 +86,8 @@ function smtpErrorMessage(err) {
   if (/535|authentication failed|invalid login/i.test(msg)) {
     return 'SMTP login failed — check cPanel email password and SMTP_USER (full email address).';
   }
-  if (/ECONNREFUSED|ENOTFOUND|ETIMEDOUT|getaddrinfo/i.test(msg)) {
-    return 'Cannot reach mail server — set SMTP_HOST to mail.yourdomain.com from cPanel → Email → Connect Devices.';
+  if (/ECONNREFUSED|ENOTFOUND|ETIMEDOUT|getaddrinfo|Greeting never received/i.test(msg)) {
+    return 'Cannot reach mail server — check SMTP_HOST, port 465 + SMTP_SECURE=true, or try port 587.';
   }
   return msg;
 }
