@@ -26,6 +26,9 @@ CREATE TABLE IF NOT EXISTS members (
   name VARCHAR(255) NOT NULL,
   email VARCHAR(191) UNIQUE NOT NULL,
   contact VARCHAR(20) NOT NULL,
+  nominee_name VARCHAR(255) NULL COMMENT 'Nominee full name',
+  nominee_contact VARCHAR(20) NULL COMMENT 'Nominee mobile',
+  nominee_relation VARCHAR(100) NULL COMMENT 'Relation with member',
   aadhaar_no VARCHAR(20) UNIQUE NOT NULL,
   password VARCHAR(255) DEFAULT NULL,
   aadhaar_photo VARCHAR(500),
@@ -338,7 +341,7 @@ CREATE TABLE IF NOT EXISTS reward_claim_requests (
   tier_id INT NOT NULL,
   program ENUM('daily_growth','lifetime') NOT NULL,
   choice ENUM('cash','gift') NOT NULL,
-  status ENUM('pending','approved','rejected') NOT NULL DEFAULT 'pending',
+  status ENUM('pending','approved','rejected','skipped') NOT NULL DEFAULT 'pending',
   cash_amount DECIMAL(15,4) NOT NULL DEFAULT 0,
   gift_name VARCHAR(255) NOT NULL,
   rank_name VARCHAR(255) NULL,
@@ -354,6 +357,21 @@ CREATE TABLE IF NOT EXISTS reward_claim_requests (
   FOREIGN KEY (member_id) REFERENCES members(id) ON DELETE CASCADE,
   FOREIGN KEY (tier_id) REFERENCES reward_plan_tiers(id) ON DELETE CASCADE,
   FOREIGN KEY (reviewed_by) REFERENCES admins(id) ON DELETE SET NULL
+);
+
+-- Achievements gallery (admin: name + photo + text — shown to all members)
+CREATE TABLE IF NOT EXISTS member_achievements (
+  id INT PRIMARY KEY AUTO_INCREMENT,
+  display_name VARCHAR(255) NOT NULL COMMENT 'Display name on achievement card',
+  photo VARCHAR(500) NOT NULL,
+  achievement TEXT NOT NULL,
+  sort_order INT NOT NULL DEFAULT 0,
+  is_active TINYINT(1) NOT NULL DEFAULT 1,
+  created_by INT NULL,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  KEY idx_ma_active (is_active, id),
+  FOREIGN KEY (created_by) REFERENCES admins(id) ON DELETE SET NULL
 );
 
 -- Marketing website hero slider (admin uploads)

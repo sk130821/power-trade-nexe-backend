@@ -29,7 +29,7 @@ CREATE TABLE IF NOT EXISTS reward_claim_requests (
   tier_id INT NOT NULL,
   program ENUM('daily_growth','lifetime') NOT NULL,
   choice ENUM('cash','gift') NOT NULL,
-  status ENUM('pending','approved','rejected') NOT NULL DEFAULT 'pending',
+  status ENUM('pending','approved','rejected','skipped') NOT NULL DEFAULT 'pending',
   cash_amount DECIMAL(15,4) NOT NULL DEFAULT 0,
   gift_name VARCHAR(255) NOT NULL,
   rank_name VARCHAR(255) NULL,

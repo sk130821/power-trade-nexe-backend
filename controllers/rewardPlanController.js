@@ -4,6 +4,7 @@ const {
   listTiers,
   buildMemberRewardProgress,
   createClaim,
+  skipTier,
   approveClaim,
   rejectClaim,
   updateTier,
@@ -44,6 +45,37 @@ exports.submitMemberClaim = async (req, res) => {
         ? 'Cash request sent to admin'
         : 'Gift request sent to admin',
       request: result,
+    });
+  } catch (e) {
+    await conn.rollback();
+    res.status(500).json({ error: e.message });
+  } finally {
+    conn.release();
+  }
+};
+
+exports.submitMemberSkip = async (req, res) => {
+  const conn = await db.getConnection();
+  try {
+    if (req.user.role !== 'member') {
+      return res.status(403).json({ error: 'Members only' });
+    }
+    const tierId = Number(req.body.tier_id);
+    if (!Number.isFinite(tierId) || tierId < 1) {
+      return res.status(400).json({ error: 'Invalid reward' });
+    }
+    await conn.beginTransaction();
+    const result = await skipTier(conn, req.user.id, tierId);
+    if (result.error) {
+      await conn.rollback();
+      return res.status(result.status || 400).json({ error: result.error });
+    }
+    await conn.commit();
+    res.json({
+      message: result.next_gift
+        ? `Skipped — next reward: ${result.next_gift}`
+        : 'Skipped to next reward',
+      skip: result,
     });
   } catch (e) {
     await conn.rollback();

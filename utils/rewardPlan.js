@@ -63,11 +63,46 @@ async function getTeamStats(conn, memberId) {
   };
 }
 
-function isQualified(stats, tier) {
+function isQualifiedWithTargets(stats, minDirects, teamBusiness) {
   return (
-    stats.active_directs >= num(tier.min_directs) &&
-    stats.team_business + 1e-9 >= num(tier.team_business)
+    stats.active_directs >= num(minDirects) &&
+    stats.team_business + 1e-9 >= num(teamBusiness)
   );
+}
+
+/** Cumulative team business only when every earlier tier is approved (not skipped). */
+function usesCumulativeBusiness(tiers, index, claimsMap) {
+  if (index <= 0) return false;
+  for (let j = 0; j < index; j += 1) {
+    const claim = claimsMap.get(tiers[j].id);
+    if (claim?.status !== 'approved') return false;
+  }
+  return true;
+}
+
+function effectiveTargets(tiers, index, claimsMap) {
+  const tier = tiers[index];
+  const minDirects = num(tier.min_directs);
+  if (usesCumulativeBusiness(tiers, index, claimsMap)) {
+    let teamBusiness = 0;
+    for (let j = 0; j <= index; j += 1) {
+      teamBusiness += num(tiers[j].team_business);
+    }
+    return {
+      min_directs: minDirects,
+      team_business: parseFloat(teamBusiness.toFixed(2)),
+      cumulative_business: true,
+    };
+  }
+  return {
+    min_directs: minDirects,
+    team_business: num(tier.team_business),
+    cumulative_business: false,
+  };
+}
+
+function tierClearsNext(claim) {
+  return claim?.status === 'approved' || claim?.status === 'skipped';
 }
 
 async function listTiers(conn, program = null, { activeOnly = false } = {}) {
@@ -101,23 +136,30 @@ async function loadClaimsByTier(conn, memberId, program) {
   return latest;
 }
 
-function buildTierProgress(tier, stats, claim, previousApproved) {
-  const minDirects = num(tier.min_directs);
-  const targetBiz = num(tier.team_business);
+function buildTierProgress(tier, stats, claim, previousCleared, targets, { hasNextTier = false } = {}) {
+  const minDirects = targets.min_directs;
+  const targetBiz = targets.team_business;
   const directsDone = stats.active_directs;
   const businessDone = stats.team_business;
   const directsLeft = Math.max(0, minDirects - directsDone);
   const businessLeft = parseFloat(Math.max(0, targetBiz - businessDone).toFixed(2));
-  const qualified = isQualified(stats, tier);
+  const qualified = isQualifiedWithTargets(stats, minDirects, targetBiz);
   const allowsCash = Number(tier.allows_cash) === 1;
   let status = 'in_progress';
   if (claim?.status === 'approved') status = 'approved';
+  else if (claim?.status === 'skipped') status = 'skipped';
   else if (claim?.status === 'pending') status = 'pending';
-  else if (!previousApproved) status = 'locked_previous';
+  else if (!previousCleared) status = 'locked_previous';
   else if (qualified) status = 'unlocked';
   else if (claim?.status === 'rejected') status = 'rejected';
 
   const canClaim = status === 'unlocked' || status === 'rejected';
+  const canSkip =
+    hasNextTier &&
+    previousCleared &&
+    claim?.status !== 'approved' &&
+    claim?.status !== 'skipped' &&
+    claim?.status !== 'pending';
 
   return {
     id: tier.id,
@@ -129,6 +171,7 @@ function buildTierProgress(tier, stats, claim, previousApproved) {
     rank_name: tier.rank_name,
     min_directs: minDirects,
     team_business: targetBiz,
+    cumulative_business: targets.cumulative_business,
     cash_amount: num(tier.cash_amount),
     allows_cash: allowsCash,
     is_active: Number(tier.is_active) === 1,
@@ -139,9 +182,10 @@ function buildTierProgress(tier, stats, claim, previousApproved) {
     directs_pct: minDirects > 0 ? Math.min(100, Math.round((directsDone / minDirects) * 100)) : 100,
     business_pct: targetBiz > 0 ? Math.min(100, Math.round((businessDone / targetBiz) * 100)) : 100,
     qualified,
-    previous_approved: previousApproved,
+    previous_cleared: previousCleared,
     status,
     can_claim: canClaim,
+    can_skip: canSkip,
     claim: claim
       ? {
           id: claim.id,
@@ -161,11 +205,15 @@ function buildTierProgress(tier, stats, claim, previousApproved) {
 async function buildProgramProgress(conn, memberId, program, stats) {
   const tiers = await listTiers(conn, program, { activeOnly: true });
   const claims = await loadClaimsByTier(conn, memberId, program);
-  let previousApproved = true;
-  return tiers.map((tier) => {
+  let previousCleared = true;
+  return tiers.map((tier, index) => {
     const claim = claims.get(tier.id) || null;
-    const row = buildTierProgress(tier, stats, claim, previousApproved);
-    previousApproved = claim?.status === 'approved';
+    const targets = effectiveTargets(tiers, index, claims);
+    const access = index === 0 || previousCleared;
+    const row = buildTierProgress(tier, stats, claim, access, targets, {
+      hasNextTier: index < tiers.length - 1,
+    });
+    previousCleared = tierClearsNext(claim);
     return row;
   });
 }
@@ -218,25 +266,26 @@ async function createClaim(conn, memberId, tierId, choiceRaw) {
     return { error: 'Cash amount is not set for this reward', status: 400 };
   }
 
-  const stats = await getTeamStats(conn, memberId);
-  if (!isQualified(stats, tier)) {
-    return {
-      error: `Need ${tier.min_directs} active directs and ${tier.team_business} team business`,
-      status: 400,
-    };
+  const prevTiers = await listTiers(conn, tier.program, { activeOnly: true });
+  const tierIndex = prevTiers.findIndex((t) => Number(t.id) === Number(tierId));
+  if (tierIndex < 0) return { error: 'Reward tier not found', status: 404 };
+
+  const claims = await loadClaimsByTier(conn, memberId, tier.program);
+  for (let j = 0; j < tierIndex; j += 1) {
+    const prev = prevTiers[j];
+    const prevClaim = claims.get(prev.id);
+    if (!tierClearsNext(prevClaim)) {
+      return { error: `Complete or skip ${prev.title} first`, status: 400 };
+    }
   }
 
-  const prevTiers = await listTiers(conn, tier.program, { activeOnly: true });
-  const earlier = prevTiers.filter((t) => Number(t.sort_order) < Number(tier.sort_order));
-  for (const prev of earlier) {
-    const [[ok]] = await conn.query(
-      `SELECT id FROM reward_claim_requests
-       WHERE member_id = ? AND tier_id = ? AND status = 'approved' LIMIT 1`,
-      [memberId, prev.id],
-    );
-    if (!ok) {
-      return { error: `Complete ${prev.title} first`, status: 400 };
-    }
+  const targets = effectiveTargets(prevTiers, tierIndex, claims);
+  const stats = await getTeamStats(conn, memberId);
+  if (!isQualifiedWithTargets(stats, targets.min_directs, targets.team_business)) {
+    return {
+      error: `Need ${targets.min_directs} active directs and ${targets.team_business} team business`,
+      status: 400,
+    };
   }
 
   const [[open]] = await conn.query(
@@ -268,6 +317,62 @@ async function createClaim(conn, memberId, tierId, choiceRaw) {
   );
 
   return { id: ins.insertId, choice, gift_name: tier.gift_name, cash_amount: cashAmount };
+}
+
+async function skipTier(conn, memberId, tierId) {
+  const [[member]] = await conn.query(
+    'SELECT id, status FROM members WHERE id = ? FOR UPDATE',
+    [memberId],
+  );
+  if (!member) return { error: 'Member not found', status: 404 };
+  if (member.status !== 'active') return { error: 'Only active members can skip rewards', status: 400 };
+
+  const [[tier]] = await conn.query(
+    'SELECT * FROM reward_plan_tiers WHERE id = ? FOR UPDATE',
+    [tierId],
+  );
+  if (!tier || Number(tier.is_active) !== 1) return { error: 'Reward tier not found', status: 404 };
+
+  const prevTiers = await listTiers(conn, tier.program, { activeOnly: true });
+  const tierIndex = prevTiers.findIndex((t) => Number(t.id) === Number(tierId));
+  if (tierIndex < 0) return { error: 'Reward tier not found', status: 404 };
+  if (tierIndex >= prevTiers.length - 1) {
+    return { error: 'This is the last reward — nothing to skip to', status: 400 };
+  }
+
+  const claims = await loadClaimsByTier(conn, memberId, tier.program);
+  for (let j = 0; j < tierIndex; j += 1) {
+    const prev = prevTiers[j];
+    const prevClaim = claims.get(prev.id);
+    if (!tierClearsNext(prevClaim)) {
+      return { error: `Complete or skip ${prev.title} first`, status: 400 };
+    }
+  }
+
+  const claim = claims.get(tier.id);
+  if (claim?.status === 'approved') return { error: 'This reward is already claimed', status: 400 };
+  if (claim?.status === 'skipped') return { error: 'Already skipped — continue with the next reward', status: 400 };
+  if (claim?.status === 'pending') return { error: 'Cancel or wait for your pending request first', status: 400 };
+
+  const stats = await getTeamStats(conn, memberId);
+  const [ins] = await conn.query(
+    `INSERT INTO reward_claim_requests
+      (member_id, tier_id, program, choice, status, cash_amount, gift_name, rank_name,
+       directs_at_claim, team_business_at_claim)
+     VALUES (?,?,?,?,'skipped',0,?,?,?,?)`,
+    [
+      memberId,
+      tierId,
+      tier.program,
+      'gift',
+      tier.gift_name,
+      tier.rank_name,
+      stats.active_directs,
+      stats.team_business,
+    ],
+  );
+
+  return { id: ins.insertId, gift_name: tier.gift_name, next_gift: prevTiers[tierIndex + 1]?.gift_name };
 }
 
 async function approveClaim(conn, requestId, adminId, adminNote) {
@@ -431,6 +536,7 @@ module.exports = {
   listTiers,
   buildMemberRewardProgress,
   createClaim,
+  skipTier,
   approveClaim,
   rejectClaim,
   updateTier,

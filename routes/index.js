@@ -7,6 +7,7 @@ const dayTradeCtrl = require('../controllers/dayTradeController');
 const noticeCtrl = require('../controllers/noticeController');
 const withdrawalCtrl = require('../controllers/withdrawalController');
 const rewardPlanCtrl = require('../controllers/rewardPlanController');
+const memberAchievementCtrl = require('../controllers/memberAchievementController');
 const websiteContentCtrl = require('../controllers/websiteContentController');
 const { adminMiddleware, authMiddleware } = require('../middleware/auth');
 const upload = require('../config/upload');
@@ -23,6 +24,7 @@ router.get('/auth/web3-config', authCtrl.getWeb3Config);
 router.get('/auth/sponsor/:code', memberCtrl.lookupSponsor);
 router.get('/public/website-banners', websiteContentCtrl.getPublicBanners);
 router.get('/public/login-popups', websiteContentCtrl.getPublicLoginPopups);
+router.get('/public/achievements', memberAchievementCtrl.getPublicAchievements);
 
 // Member registration
 router.post('/member/register', upload.fields([{ name: 'aadhaar_photo', maxCount: 1 }]), memberCtrl.register);
@@ -73,6 +75,8 @@ router.get('/member/day-trades', authMiddleware, dayTradeCtrl.getDayTradesMember
 router.get('/member/day-trades/my-buys', authMiddleware, memberCtrl.getMyDayTradeInvestments);
 router.post('/member/buy-trade', authMiddleware, memberCtrl.buyDayTrade);
 router.post('/member/change-password', authMiddleware, memberCtrl.changeMemberPassword);
+router.get('/member/nominee', authMiddleware, memberCtrl.getMemberNominee);
+router.patch('/member/nominee', authMiddleware, memberCtrl.updateMemberNominee);
 router.get('/member/notices', authMiddleware, noticeCtrl.listForMembers);
 router.get('/member/login-popups', authMiddleware, authCtrl.getMemberLoginPopups);
 router.patch('/member/wallet-address', authMiddleware, withdrawalCtrl.updateMemberWalletAddress);
@@ -80,7 +84,9 @@ router.post('/member/withdrawals/send-otp', authMiddleware, withdrawalCtrl.sendW
 router.post('/member/withdrawals', authMiddleware, withdrawalCtrl.createWithdrawal);
 router.get('/member/withdrawals', authMiddleware, withdrawalCtrl.listMyWithdrawals);
 router.get('/member/rewards', authMiddleware, rewardPlanCtrl.getMemberRewards);
+router.get('/member/achievements', authMiddleware, memberAchievementCtrl.getMyAchievements);
 router.post('/member/rewards/claim', authMiddleware, rewardPlanCtrl.submitMemberClaim);
+router.post('/member/rewards/skip', authMiddleware, rewardPlanCtrl.submitMemberSkip);
 
 // Admin protected
 router.get('/admin/stats', adminMiddleware, memberCtrl.getAdminStats);
@@ -155,6 +161,20 @@ router.get('/admin/reward-plan/requests', adminMiddleware, rewardPlanCtrl.adminL
 router.post('/admin/reward-plan/requests/:id/approve', adminMiddleware, rewardPlanCtrl.adminApproveRequest);
 router.post('/admin/reward-plan/requests/:id/reject', adminMiddleware, rewardPlanCtrl.adminRejectRequest);
 router.get('/admin/reward-plan/achievers', adminMiddleware, rewardPlanCtrl.adminAchievers);
+router.get('/admin/member-achievements', adminMiddleware, memberAchievementCtrl.adminListAchievements);
+router.post(
+  '/admin/member-achievements',
+  adminMiddleware,
+  upload.fields([{ name: 'achievement_photo', maxCount: 1 }]),
+  memberAchievementCtrl.adminCreateAchievement,
+);
+router.put(
+  '/admin/member-achievements/:id',
+  adminMiddleware,
+  upload.fields([{ name: 'achievement_photo', maxCount: 1 }]),
+  memberAchievementCtrl.adminUpdateAchievement,
+);
+router.delete('/admin/member-achievements/:id', adminMiddleware, memberAchievementCtrl.adminDeleteAchievement);
 router.get('/admin/website-banners', adminMiddleware, websiteContentCtrl.adminListBanners);
 router.post(
   '/admin/website-banners',

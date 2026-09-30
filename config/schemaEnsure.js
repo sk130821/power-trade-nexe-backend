@@ -606,6 +606,35 @@ async function ensureSchema() {
       console.log('[db] Created daily_bonus_pairs');
     }
 
+    const nomineeCols = [
+      {
+        name: 'nominee_name',
+        ddl: `ALTER TABLE members ADD COLUMN nominee_name VARCHAR(255) NULL
+         COMMENT 'Nominee full name' AFTER contact`,
+      },
+      {
+        name: 'nominee_contact',
+        ddl: `ALTER TABLE members ADD COLUMN nominee_contact VARCHAR(20) NULL
+         COMMENT 'Nominee mobile' AFTER nominee_name`,
+      },
+      {
+        name: 'nominee_relation',
+        ddl: `ALTER TABLE members ADD COLUMN nominee_relation VARCHAR(100) NULL
+         COMMENT 'Relation with member' AFTER nominee_contact`,
+      },
+    ];
+    for (const col of nomineeCols) {
+      const [c] = await db.query(
+        `SELECT COUNT(*) AS n FROM information_schema.COLUMNS
+         WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'members' AND COLUMN_NAME = ?`,
+        [col.name],
+      );
+      if (Number(c[0]?.n) === 0) {
+        await db.query(col.ddl);
+        console.log(`[db] Added members.${col.name}`);
+      }
+    }
+
     const [ltRank] = await db.query(
       `SELECT COUNT(*) AS n FROM information_schema.COLUMNS
        WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'members' AND COLUMN_NAME = 'lifetime_rank'`,
@@ -657,7 +686,7 @@ async function ensureSchema() {
           tier_id INT NOT NULL,
           program ENUM('daily_growth','lifetime') NOT NULL,
           choice ENUM('cash','gift') NOT NULL,
-          status ENUM('pending','approved','rejected') NOT NULL DEFAULT 'pending',
+          status ENUM('pending','approved','rejected','skipped') NOT NULL DEFAULT 'pending',
           cash_amount DECIMAL(15,4) NOT NULL DEFAULT 0,
           gift_name VARCHAR(255) NOT NULL,
           rank_name VARCHAR(255) NULL,
@@ -675,6 +704,18 @@ async function ensureSchema() {
           FOREIGN KEY (reviewed_by) REFERENCES admins(id) ON DELETE SET NULL
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`);
       console.log('[db] Created reward_claim_requests');
+    } else {
+      const [rcrStatusCol] = await db.query(
+        `SELECT COLUMN_TYPE FROM information_schema.COLUMNS
+         WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'reward_claim_requests' AND COLUMN_NAME = 'status'`,
+      );
+      const colType = String(rcrStatusCol[0]?.COLUMN_TYPE || '');
+      if (colType && !colType.includes('skipped')) {
+        await db.query(`
+          ALTER TABLE reward_claim_requests
+          MODIFY status ENUM('pending','approved','rejected','skipped') NOT NULL DEFAULT 'pending'`);
+        console.log('[db] reward_claim_requests.status: added skipped');
+      }
     }
 
     const { seedDefaultTiers } = require('../utils/rewardPlan');
@@ -698,6 +739,48 @@ async function ensureSchema() {
           FOREIGN KEY (created_by) REFERENCES admins(id) ON DELETE SET NULL
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`);
       console.log('[db] Created website_banners');
+    }
+
+    const [maTbl] = await db.query(
+      `SELECT COUNT(*) AS n FROM information_schema.TABLES
+       WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'member_achievements'`,
+    );
+    if (Number(maTbl[0]?.n) === 0) {
+      await db.query(`
+        CREATE TABLE member_achievements (
+          id INT PRIMARY KEY AUTO_INCREMENT,
+          display_name VARCHAR(255) NOT NULL COMMENT 'Display name on achievement card',
+          photo VARCHAR(500) NOT NULL,
+          achievement TEXT NOT NULL,
+          sort_order INT NOT NULL DEFAULT 0,
+          is_active TINYINT(1) NOT NULL DEFAULT 1,
+          created_by INT NULL,
+          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+          updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+          KEY idx_ma_active (is_active, id),
+          FOREIGN KEY (created_by) REFERENCES admins(id) ON DELETE SET NULL
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`);
+      console.log('[db] Created member_achievements');
+    } else {
+      const [maMemberCol] = await db.query(
+        `SELECT COUNT(*) AS n FROM information_schema.COLUMNS
+         WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'member_achievements' AND COLUMN_NAME = 'member_id'`,
+      );
+      if (Number(maMemberCol[0]?.n) > 0) {
+        const [fkRows] = await db.query(
+          `SELECT CONSTRAINT_NAME FROM information_schema.KEY_COLUMN_USAGE
+           WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'member_achievements'
+             AND COLUMN_NAME = 'member_id' AND REFERENCED_TABLE_NAME IS NOT NULL`,
+        );
+        for (const fk of fkRows) {
+          const name = fk.CONSTRAINT_NAME;
+          if (name) {
+            await db.query(`ALTER TABLE member_achievements DROP FOREIGN KEY \`${name}\``);
+          }
+        }
+        await db.query('ALTER TABLE member_achievements DROP COLUMN member_id');
+        console.log('[db] member_achievements: removed member_id (gallery mode)');
+      }
     }
   } catch (e) {
     console.error('[db] Schema ensure failed:', e.message);

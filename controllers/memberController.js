@@ -762,6 +762,84 @@ exports.changeMemberPassword = async (req, res) => {
   }
 };
 
+function normalizeNomineeContact(raw) {
+  const digits = String(raw || '').replace(/\D/g, '');
+  return digits;
+}
+
+function parseNomineeBody(body) {
+  const name = body.nominee_name != null ? String(body.nominee_name).trim() : '';
+  const relation = body.nominee_relation != null ? String(body.nominee_relation).trim() : '';
+  const contactDigits = normalizeNomineeContact(body.nominee_contact);
+  if (!name || name.length < 2) {
+    return { error: 'Nominee name is required (at least 2 characters)' };
+  }
+  if (name.length > 255) {
+    return { error: 'Nominee name is too long' };
+  }
+  if (!relation || relation.length < 2) {
+    return { error: 'Relation with nominee is required' };
+  }
+  if (relation.length > 100) {
+    return { error: 'Relation is too long' };
+  }
+  if (contactDigits.length < 10 || contactDigits.length > 15) {
+    return { error: 'Nominee contact must be 10–15 digits' };
+  }
+  return {
+    nominee_name: name,
+    nominee_contact: contactDigits,
+    nominee_relation: relation,
+  };
+}
+
+exports.getMemberNominee = async (req, res) => {
+  try {
+    if (req.user.role !== 'member') {
+      return res.status(403).json({ error: 'Members only' });
+    }
+    const [[row]] = await db.query(
+      `SELECT nominee_name, nominee_contact, nominee_relation
+       FROM members WHERE id = ?`,
+      [req.user.id],
+    );
+    if (!row) return res.status(404).json({ error: 'Member not found' });
+    res.json({
+      nominee_name: row.nominee_name || '',
+      nominee_contact: row.nominee_contact || '',
+      nominee_relation: row.nominee_relation || '',
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+};
+
+exports.updateMemberNominee = async (req, res) => {
+  try {
+    if (req.user.role !== 'member') {
+      return res.status(403).json({ error: 'Members only' });
+    }
+    const parsed = parseNomineeBody(req.body);
+    if (parsed.error) return res.status(400).json({ error: parsed.error });
+
+    const [result] = await db.query(
+      `UPDATE members SET nominee_name = ?, nominee_contact = ?, nominee_relation = ?
+       WHERE id = ?`,
+      [parsed.nominee_name, parsed.nominee_contact, parsed.nominee_relation, req.user.id],
+    );
+    if (result.affectedRows === 0) return res.status(404).json({ error: 'Member not found' });
+
+    res.json({
+      message: 'Nominee details saved',
+      nominee_name: parsed.nominee_name,
+      nominee_contact: parsed.nominee_contact,
+      nominee_relation: parsed.nominee_relation,
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+};
+
 exports.getMemberDashboard = async (req, res) => {
   try {
     const memberId = req.user.id;
