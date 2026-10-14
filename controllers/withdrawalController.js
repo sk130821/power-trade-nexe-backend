@@ -15,6 +15,15 @@ const PORTAL_FEE_PERCENT = 12;
 /** Minimum gross withdrawal amount (USD). */
 const MIN_WITHDRAWAL_USD = 10;
 
+/** Withdrawal amount must be a multiple of this (USD). */
+const WITHDRAWAL_STEP_USD = 10;
+
+function isWithdrawalAmountStepValid(amt) {
+  const cents = Math.round(Number(amt) * 100);
+  if (!Number.isFinite(cents) || cents <= 0) return false;
+  return cents % (WITHDRAWAL_STEP_USD * 100) === 0;
+}
+
 /** Returns { fee, net } in USD for a gross withdrawal amount. */
 function computePortalFee(amount) {
   const gross = Number(amount) || 0;
@@ -52,6 +61,12 @@ async function validateWithdrawalRequest(memberId, wallet_type, amount) {
   if (!Number.isFinite(amt) || amt <= 0) return { error: 'Valid amount is required', status: 400 };
   if (amt < MIN_WITHDRAWAL_USD) {
     return { error: `Minimum withdrawal is $${MIN_WITHDRAWAL_USD}`, status: 400 };
+  }
+  if (!isWithdrawalAmountStepValid(amt)) {
+    return {
+      error: `Withdrawal amount must be in $${WITHDRAWAL_STEP_USD} steps (e.g. $10, $20, $30)`,
+      status: 400,
+    };
   }
 
   const scheduleCheck = checkWithdrawalAllowed(wallet_type);
@@ -228,6 +243,7 @@ exports.listMyWithdrawals = async (req, res) => {
       withdrawals: rows,
       schedule: buildWithdrawalSchedule(),
       min_withdrawal_usd: MIN_WITHDRAWAL_USD,
+      withdrawal_step_usd: WITHDRAWAL_STEP_USD,
       trading_wallet,
     });
   } catch (e) {
