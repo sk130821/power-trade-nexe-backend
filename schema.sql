@@ -308,6 +308,7 @@ CREATE TABLE IF NOT EXISTS withdrawal_requests (
   net_amount DECIMAL(15,4) NOT NULL DEFAULT 0 COMMENT 'Amount paid to member after portal fee',
   destination_address VARCHAR(42) NOT NULL,
   status ENUM('pending','rejected','paid') NOT NULL DEFAULT 'pending',
+  balance_held TINYINT(1) NOT NULL DEFAULT 0 COMMENT '1 = amount deducted from member wallet when request was created',
   member_note TEXT,
   admin_note TEXT,
   payout_tx_hash VARCHAR(88) NULL,

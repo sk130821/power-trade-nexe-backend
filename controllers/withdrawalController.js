@@ -205,8 +205,8 @@ exports.createWithdrawal = async (req, res) => {
     const fee = computePortalFee(check.amt);
     await conn.query(
       `INSERT INTO withdrawal_requests
-         (member_id, wallet_type, amount, fee_percent, fee_amount, net_amount, destination_address, member_note, status)
-       VALUES (?,?,?,?,?,?,?,?,'pending')`,
+         (member_id, wallet_type, amount, fee_percent, fee_amount, net_amount, destination_address, member_note, status, balance_held)
+       VALUES (?,?,?,?,?,?,?,?,'pending',1)`,
       [
         memberId,
         wType,
@@ -218,9 +218,13 @@ exports.createWithdrawal = async (req, res) => {
         wNote || null,
       ],
     );
+    await conn.query(`UPDATE members SET ${check.col} = ${check.col} - ? WHERE id = ?`, [
+      check.amt,
+      memberId,
+    ]);
     await conn.commit();
     res.json({
-      message: `Withdrawal request sent to admin. Portal fee ${fee.fee_percent}% ($${fee.fee_amount.toFixed(2)}) — you will receive $${fee.net_amount.toFixed(2)}`,
+      message: `$${check.amt.toFixed(2)} reserved from your wallet (pending admin). Portal fee ${fee.fee_percent}% ($${fee.fee_amount.toFixed(2)}) — you will receive $${fee.net_amount.toFixed(2)} if approved.`,
     });
   } catch (e) {
     await conn.rollback();
@@ -276,18 +280,48 @@ exports.adminListWithdrawals = async (req, res) => {
 };
 
 exports.adminRejectWithdrawal = async (req, res) => {
+  const conn = await db.getConnection();
   try {
     const id = Number(req.params.id);
     if (!Number.isFinite(id) || id < 1) return res.status(400).json({ error: 'Invalid id' });
     const { admin_note } = req.body;
-    const [r] = await db.query(
-      `UPDATE withdrawal_requests SET status = 'rejected', admin_note = ? WHERE id = ? AND status = 'pending'`,
+
+    await conn.beginTransaction();
+    const [rows] = await conn.query(`SELECT * FROM withdrawal_requests WHERE id = ? FOR UPDATE`, [id]);
+    if (!rows.length) {
+      await conn.rollback();
+      return res.status(404).json({ error: 'Request not found' });
+    }
+    const w = rows[0];
+    if (w.status !== 'pending') {
+      await conn.rollback();
+      return res.status(400).json({ error: 'Pending request not found' });
+    }
+
+    const col = WALLET_COL[w.wallet_type];
+    if (Number(w.balance_held) === 1 && col) {
+      await conn.query(`UPDATE members SET ${col} = ${col} + ? WHERE id = ?`, [
+        Number(w.amount),
+        w.member_id,
+      ]);
+    }
+
+    await conn.query(
+      `UPDATE withdrawal_requests SET status = 'rejected', admin_note = ? WHERE id = ?`,
       [admin_note || null, id],
     );
-    if (!r.affectedRows) return res.status(400).json({ error: 'Pending request not found' });
-    res.json({ message: 'Rejected' });
+    await conn.commit();
+    res.json({
+      message:
+        Number(w.balance_held) === 1
+          ? 'Rejected — amount returned to member wallet'
+          : 'Rejected',
+    });
   } catch (e) {
+    await conn.rollback();
     res.status(500).json({ error: e.message });
+  } finally {
+    conn.release();
   }
 };
 
@@ -314,24 +348,28 @@ exports.adminMarkWithdrawalPaid = async (req, res) => {
       await conn.rollback();
       return res.status(400).json({ error: 'Invalid wallet on row' });
     }
-    const [m] = await conn.query(
-      `SELECT id, ${col} AS bal FROM members WHERE id = ? FOR UPDATE`,
-      [w.member_id],
-    );
-    if (!m.length) {
-      await conn.rollback();
-      return res.status(404).json({ error: 'Member not found' });
-    }
-    const bal = Number(m[0].bal);
     const need = Number(w.amount);
-    if (bal < need) {
-      await conn.rollback();
-      return res.status(400).json({
-        error: `Member balance is now too low ($${bal.toFixed(2)} < $${need.toFixed(2)}) — reject or adjust the amount`,
-      });
+    const heldAtRequest = Number(w.balance_held) === 1;
+
+    if (!heldAtRequest) {
+      const [m] = await conn.query(
+        `SELECT id, ${col} AS bal FROM members WHERE id = ? FOR UPDATE`,
+        [w.member_id],
+      );
+      if (!m.length) {
+        await conn.rollback();
+        return res.status(404).json({ error: 'Member not found' });
+      }
+      const bal = Number(m[0].bal);
+      if (bal < need) {
+        await conn.rollback();
+        return res.status(400).json({
+          error: `Member balance is now too low ($${bal.toFixed(2)} < $${need.toFixed(2)}) — reject or adjust the amount`,
+        });
+      }
+      await conn.query(`UPDATE members SET ${col} = ${col} - ? WHERE id = ?`, [need, w.member_id]);
     }
 
-    await conn.query(`UPDATE members SET ${col} = ${col} - ? WHERE id = ?`, [need, w.member_id]);
     await conn.query(
       `UPDATE withdrawal_requests SET status = 'paid', payout_tx_hash = ?,
         admin_note = COALESCE(?, admin_note) WHERE id = ?`,
@@ -339,8 +377,9 @@ exports.adminMarkWithdrawalPaid = async (req, res) => {
     );
     await conn.commit();
     res.json({
-      message:
-        'Marked as paid — you can optionally save the BSC tx hash from your Trust Wallet transfer to the member address',
+      message: heldAtRequest
+        ? 'Marked as paid — wallet was already deducted when the member submitted the request'
+        : 'Marked as paid — amount deducted from member wallet (legacy request)',
     });
   } catch (e) {
     await conn.rollback();
