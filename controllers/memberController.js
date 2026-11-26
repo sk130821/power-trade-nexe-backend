@@ -1001,14 +1001,15 @@ exports.getMemberDashboard = async (req, res) => {
       [memberId, todayIst],
     );
     const [liveTradeWins] = await db.query(
-      `SELECT MIN(dti.id) AS id,
+      `SELECT dti.id,
               dti.day_trade_id,
-              SUM(dti.invest_amount) AS invest_amount,
-              SUM(dti.result_amount) AS result_amount,
-              MAX(COALESCE(dti.trade_name_at_buy, dt.trade_name)) AS trade_name,
-              MAX(COALESCE(dti.trade_symbol_at_buy, dt.trade_symbol)) AS trade_symbol,
-              MAX(COALESCE(dti.session_date_at_buy, dt.trade_date, DATE(dti.invested_at))) AS trade_date,
-              MAX(dt.closed_at) AS closed_at
+              dti.invest_amount,
+              dti.result_amount,
+              COALESCE(dti.trade_name_at_buy, dt.trade_name) AS trade_name,
+              COALESCE(dti.trade_symbol_at_buy, dt.trade_symbol) AS trade_symbol,
+              COALESCE(dti.session_date_at_buy, dt.trade_date, DATE(dti.invested_at)) AS trade_date,
+              dt.closed_at,
+              t.created_at AS credited_at
        FROM day_trade_investments dti
        INNER JOIN day_trades dt ON dt.id = dti.day_trade_id AND dt.is_winner = 1
        INNER JOIN transactions t
@@ -1018,9 +1019,8 @@ exports.getMemberDashboard = async (req, res) => {
         AND t.reference_id = dti.day_trade_id
         AND t.dedup_key = CONCAT('trading_income|dt', dti.day_trade_id, '|inv', dti.id)
        WHERE dti.member_id = ? AND dti.status = 'doubled'
-         AND DATE(t.created_at) = ?
-       GROUP BY dti.day_trade_id
-       ORDER BY closed_at DESC`,
+         AND DATE(CONVERT_TZ(t.created_at, '+00:00', '+05:30')) = ?
+       ORDER BY t.created_at DESC, dti.id DESC`,
       [memberId, todayIst],
     );
 
