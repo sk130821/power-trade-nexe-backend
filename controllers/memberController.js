@@ -240,6 +240,57 @@ exports.sendRegistrationOtp = async (req, res) => {
   }
 };
 
+/** Create pending member from parsed registration body (no email OTP). */
+async function createPendingMemberFromRegistrationParsed(parsed, sponsor_id) {
+  const dup = await assertRegistrationNotDuplicate(parsed.email, parsed.aadhaar_no);
+  if (dup) return dup;
+
+  const result = await insertPendingMember({
+    name: parsed.name,
+    email: parsed.email,
+    contact: parsed.contact,
+    aadhaar_no: parsed.aadhaar_no,
+    password: parsed.password,
+    dob: parsed.dob,
+    sponsor_id: sponsor_id ?? null,
+    package_amount: parsed.package_amount,
+    aadhaar_photo: parsed.aadhaar_photo,
+  });
+  if (result.error) return { error: result.error, status: result.status };
+  return { ok: true, result };
+}
+
+/** Skip email OTP when delivery fails — same outcome as verify step (payment still required). */
+exports.registerWithoutOtp = async (req, res) => {
+  try {
+    const parsed = parseRegistrationBody(req.body, req.files);
+    if (parsed.error) return res.status(parsed.status).json({ error: parsed.error });
+
+    let sponsor_id = null;
+    if (parsed.sponsor_code) {
+      sponsor_id = await resolveSponsorId(parsed.sponsor_code);
+      if (!sponsor_id) {
+        return res.status(400).json({ error: 'Sponsor Member ID not found — use a valid PTN code' });
+      }
+    }
+
+    const created = await createPendingMemberFromRegistrationParsed(parsed, sponsor_id);
+    if (created.error) return res.status(created.status || 400).json({ error: created.error });
+
+    res.json({
+      message:
+        'Account created without email OTP — submit package payment to finish. Sign in with email + password after payment is on file.',
+      registration_complete: false,
+      payment_required: true,
+      email_verified: false,
+      ...registrationApiPayload(created.result),
+    });
+  } catch (err) {
+    if (err.code === 'ER_DUP_ENTRY') return res.status(400).json({ error: 'Email or Aadhaar already registered' });
+    res.status(500).json({ error: err.message });
+  }
+};
+
 /** Step 2: verify OTP → create pending member (payment required next). */
 exports.verifyRegistrationOtp = async (req, res) => {
   try {
@@ -316,6 +367,36 @@ exports.sendDownlineRegistrationOtp = async (req, res) => {
     if (!result.ok) return res.status(result.status || 400).json({ error: result.error });
     res.json(buildOtpSuccessJson(result));
   } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+};
+
+/** Downline registration — skip OTP when email delivery fails. */
+exports.registerDownlineWithoutOtp = async (req, res) => {
+  try {
+    const sponsorId = req.user.id;
+    const [sp] = await db.query('SELECT id, status, referral_code FROM members WHERE id = ?', [sponsorId]);
+    if (!sp.length) return res.status(404).json({ error: 'Sponsor not found' });
+    if (sp[0].status !== 'active') {
+      return res.status(400).json({ error: 'Only active members can register new members' });
+    }
+
+    const parsed = parseRegistrationBody(req.body, req.files);
+    if (parsed.error) return res.status(parsed.status).json({ error: parsed.error });
+
+    const created = await createPendingMemberFromRegistrationParsed(parsed, sponsorId);
+    if (created.error) return res.status(created.status || 400).json({ error: created.error });
+
+    res.json({
+      message: 'Member created without email OTP — submit their package payment to complete signup.',
+      registration_complete: false,
+      payment_required: true,
+      email_verified: false,
+      ...registrationApiPayload(created.result),
+      sponsor_code: sp[0].referral_code,
+    });
+  } catch (err) {
+    if (err.code === 'ER_DUP_ENTRY') return res.status(400).json({ error: 'Email or Aadhaar already registered' });
     res.status(500).json({ error: err.message });
   }
 };

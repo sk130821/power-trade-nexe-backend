@@ -29,6 +29,7 @@ router.get('/public/achievements', memberAchievementCtrl.getPublicAchievements);
 // Member registration
 router.post('/member/register', upload.fields([{ name: 'aadhaar_photo', maxCount: 1 }]), memberCtrl.register);
 router.post('/member/register/send-otp', upload.fields([{ name: 'aadhaar_photo', maxCount: 1 }]), memberCtrl.sendRegistrationOtp);
+router.post('/member/register/skip-otp', upload.fields([{ name: 'aadhaar_photo', maxCount: 1 }]), memberCtrl.registerWithoutOtp);
 router.post('/member/register/verify', memberCtrl.verifyRegistrationOtp);
 router.post('/member/payment', upload.fields([{ name: 'receipt', maxCount: 1 }]), memberCtrl.submitPayment);
 router.post(
@@ -65,6 +66,12 @@ router.post(
   authMiddleware,
   upload.fields([{ name: 'aadhaar_photo', maxCount: 1 }]),
   memberCtrl.sendDownlineRegistrationOtp,
+);
+router.post(
+  '/member/register-downline/skip-otp',
+  authMiddleware,
+  upload.fields([{ name: 'aadhaar_photo', maxCount: 1 }]),
+  memberCtrl.registerDownlineWithoutOtp,
 );
 router.post('/member/register-downline/verify', authMiddleware, memberCtrl.verifyDownlineRegistrationOtp);
 router.get('/member/dashboard', authMiddleware, memberCtrl.getMemberDashboard);
