@@ -8,7 +8,14 @@ const bcrypt = require('bcryptjs');
 const { recordTransaction } = require('../utils/transaction');
 const { initIncomeCapOnActivation } = require('../utils/incomeCap');
 const { buildNonWorking2xParticipationWindow } = require('../utils/nonWorking2xWindow');
-const { isDayTradeVisibleToMember, isDayTradeBuyWindowOpen, getTodayIstYmd } = require('../utils/dayTradeIstWindow');
+const {
+  isDayTradeVisibleToMember,
+  isDayTradeBuyWindowOpen,
+  getTodayIstYmd,
+  getIstYmdDaysAgo,
+  dayTradeSessionYmd,
+  normalizeIstSessionYmd,
+} = require('../utils/dayTradeIstWindow');
 const {
   initPlanCycle,
   addRetopupCycle,
@@ -1000,29 +1007,72 @@ exports.getMemberDashboard = async (req, res) => {
        WHERE member_id = ? AND income_type = 'daily_bonus_income' AND DATE(created_at) = ?`,
       [memberId, todayIst],
     );
-    const [liveTradeWins] = await db.query(
+    const yesterdayIst = getIstYmdDaysAgo(1);
+    const winLookbackFrom = getIstYmdDaysAgo(3);
+
+    /** Popup session day = when the member bought (IST), not script trade_date or settlement batch. */
+    function liveTradeWinCalendarDay(row) {
+      const buyDay = dayTradeSessionYmd(row.invested_at);
+      if (buyDay) return buyDay;
+      return normalizeIstSessionYmd(row.session_date_at_buy);
+    }
+
+    function liveTradeSettlementDay(row) {
+      return (
+        dayTradeSessionYmd(row.closed_at) ||
+        dayTradeSessionYmd(row.credited_at) ||
+        liveTradeWinCalendarDay(row)
+      );
+    }
+
+    /** All recent 2× wins — session day (IST), not “today only”. */
+    const [liveTradeWinsRaw] = await db.query(
       `SELECT dti.id,
               dti.day_trade_id,
               dti.invest_amount,
               dti.result_amount,
+              dti.session_date_at_buy,
+              dti.invested_at,
               COALESCE(dti.trade_name_at_buy, dt.trade_name) AS trade_name,
               COALESCE(dti.trade_symbol_at_buy, dt.trade_symbol) AS trade_symbol,
               COALESCE(dti.session_date_at_buy, dt.trade_date, DATE(dti.invested_at)) AS trade_date,
               dt.closed_at,
-              t.created_at AS credited_at
+              t.created_at AS credited_at,
+              t.id AS transaction_id
        FROM day_trade_investments dti
        INNER JOIN day_trades dt ON dt.id = dti.day_trade_id AND dt.is_winner = 1
-       INNER JOIN transactions t
+       LEFT JOIN transactions t
          ON t.member_id = dti.member_id
         AND t.income_type = 'trading_income'
         AND t.reference_type = 'day_trade'
         AND t.reference_id = dti.day_trade_id
         AND t.dedup_key = CONCAT('trading_income|dt', dti.day_trade_id, '|inv', dti.id)
-       WHERE dti.member_id = ? AND dti.status = 'doubled'
-         AND DATE(CONVERT_TZ(t.created_at, '+00:00', '+05:30')) = ?
-       ORDER BY t.created_at DESC, dti.id DESC`,
-      [memberId, todayIst],
+       WHERE dti.member_id = ?
+         AND dti.status = 'doubled'
+         AND COALESCE(dt.closed_at, t.created_at, dti.invested_at) >= DATE_SUB(?, INTERVAL 2 DAY)
+       ORDER BY COALESCE(t.created_at, dt.closed_at, dti.invested_at) DESC, dti.id DESC`,
+      [memberId, winLookbackFrom],
     );
+
+    const liveTradeWinsWithDay = (liveTradeWinsRaw || []).map((row) => {
+      const win_day_ist = liveTradeWinCalendarDay(row);
+      const settle_day_ist = liveTradeSettlementDay(row);
+      return { ...row, win_day_ist, settle_day_ist };
+    });
+    /** Only congratulate for 2× settled today/yesterday; group by buy day (not batch settle date). */
+    const recentSessionWins = liveTradeWinsWithDay.filter((r) => {
+      if (!r.win_day_ist) return false;
+      if (r.settle_day_ist !== todayIst && r.settle_day_ist !== yesterdayIst) return false;
+      return r.win_day_ist === todayIst || r.win_day_ist === yesterdayIst;
+    });
+    const winDaysSet = new Set(recentSessionWins.map((r) => r.win_day_ist).filter(Boolean));
+    /** Today’s buy-session wins first; else yesterday’s (2 calendar days until today has new wins). */
+    let liveTradeWinDay = null;
+    if (winDaysSet.has(todayIst)) liveTradeWinDay = todayIst;
+    else if (winDaysSet.has(yesterdayIst)) liveTradeWinDay = yesterdayIst;
+    const liveTradeWins = liveTradeWinDay
+      ? recentSessionWins.filter((r) => r.win_day_ist === liveTradeWinDay)
+      : [];
 
     res.json({
       member: memberRow,
@@ -1041,6 +1091,7 @@ exports.getMemberDashboard = async (req, res) => {
       monthly_salary,
       trading_wallet_info,
       live_trade_wins: liveTradeWins,
+      live_trade_win_day: liveTradeWinDay,
       daily_growth_income: {
         total: Number(memberRow.total_daily_bonus_income) || 0,
         today: Number(dailyGrowthTodayRows[0]?.today) || 0,

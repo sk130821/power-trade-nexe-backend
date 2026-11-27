@@ -21,6 +21,41 @@ function getTodayIstYmd(date = new Date()) {
   return date.toLocaleDateString('en-CA', { timeZone: IST_TZ });
 }
 
+/** YYYY-MM-DD in IST, N calendar days before the given instant. */
+function getIstYmdDaysAgo(days, date = new Date()) {
+  const base = getTodayIstYmd(date);
+  const [y, m, d] = base.split('-').map((n) => Number(n));
+  const dt = new Date(Date.UTC(y, m - 1, d));
+  dt.setUTCDate(dt.getUTCDate() - Math.max(0, Number(days) || 0));
+  return dt.toISOString().slice(0, 10);
+}
+
+/** True for usable YYYY-MM-DD session keys (rejects 0000-00-00 and pre-2000 garbage). */
+function isValidIstSessionYmd(ymd) {
+  if (!ymd || typeof ymd !== 'string') return false;
+  const s = ymd.trim().slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) return false;
+  if (s === '0000-00-00') return false;
+  const y = Number(s.slice(0, 4));
+  return y >= 2000 && y <= 2100;
+}
+
+/** Normalize DB DATE / ISO / Date → valid YYYY-MM-DD in IST, or null. */
+function normalizeIstSessionYmd(raw) {
+  if (raw == null || raw === '') return null;
+  if (raw instanceof Date) {
+    if (Number.isNaN(raw.getTime()) || raw.getFullYear() < 2000) return null;
+    return raw.toLocaleDateString('en-CA', { timeZone: IST_TZ });
+  }
+  const s = String(raw).trim();
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s.slice(0, 10))) {
+    const ymd = s.slice(0, 10);
+    return isValidIstSessionYmd(ymd) ? ymd : null;
+  }
+  const fromDt = dayTradeSessionYmd(raw);
+  return isValidIstSessionYmd(fromDt) ? fromDt : null;
+}
+
 /** MySQL DATE / ISO / Date → YYYY-MM-DD in IST (for session comparison). */
 function dayTradeSessionYmd(raw) {
   if (raw == null || raw === '') return null;
@@ -61,6 +96,9 @@ module.exports = {
   MEMBER_DAY_TRADE_BUY_END_HOUR,
   getIstHourMinute,
   getTodayIstYmd,
+  getIstYmdDaysAgo,
+  isValidIstSessionYmd,
+  normalizeIstSessionYmd,
   dayTradeSessionYmd,
   isDayTradeActivateAllowed,
   isDayTradeBuyWindowOpen,
